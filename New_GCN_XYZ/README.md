@@ -18,6 +18,8 @@
 ## Documentation and scripts
 - `docs/` : user guides and project docs.
 - `scripts/` : `.bat` launch scripts.
+- `docs/RUN_PYTORCH_GPU_NO_C.md` : run with `pytorch_gpu` while keeping cache/temp on `D:`.
+- `scripts/run_comparison_gpu_no_c.ps1` : one-shot PowerShell runner for the above setup.
 
 ## Archived legacy content
 - `archive/legacy_code/` : old root-level duplicated code.

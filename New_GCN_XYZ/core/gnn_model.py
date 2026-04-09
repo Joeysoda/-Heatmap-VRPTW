@@ -20,7 +20,7 @@ if HAS_TORCH:
         from torch_geometric.nn import GCNConv
         HAS_PYG = True
     except ImportError:
-        print("Warning: torch_geometric not found. Using simple fallback model.")
+        print("Warning: torch_geometric not found. Using dense fallback model.")
 
 # Only define the model class if PyTorch is available
 if HAS_TORCH:
@@ -106,6 +106,49 @@ else:
     # Dummy class when PyTorch is not available
     GCNHeatmapModel = None
 
+
+def _safe_torch_load(model_path, device):
+    # PyTorch >=2.4 supports weights_only. Keep backward compatibility.
+    try:
+        return torch.load(model_path, map_location=device, weights_only=True)
+    except TypeError:
+        return torch.load(model_path, map_location=device)
+
+
+def _try_load_model_state(model, model_path, device):
+    if not model_path or not os.path.exists(model_path):
+        return False
+    try:
+        payload = _safe_torch_load(model_path, device)
+        state = payload.get("state_dict") if isinstance(payload, dict) and "state_dict" in payload else payload
+        if not isinstance(state, dict):
+            return False
+
+        model_keys = set(model.state_dict().keys())
+        state_keys = set(state.keys())
+
+        # Prevent loading checkpoints from incompatible backends (PyG vs non-PyG).
+        has_pyg_state = any(k.startswith("conv") for k in state_keys)
+        if has_pyg_state != model.has_pyg:
+            print("Model backend mismatch, skip checkpoint and rebuild heatmap.")
+            return False
+
+        missing = model_keys - state_keys
+        unexpected = state_keys - model_keys
+        if missing or unexpected:
+            print(
+                "Model key mismatch, skip checkpoint "
+                f"(missing={len(missing)}, unexpected={len(unexpected)})."
+            )
+            return False
+
+        model.load_state_dict(state)
+        model.eval()
+        return True
+    except Exception as e:
+        print(f"Failed to load model: {e}")
+        return False
+
 def generate_heatmap(unique_nodes, model_path=None, temperature=1.0, train=False):
     """
     Generate heatmap for the given list of unique PHYSICAL nodes.
@@ -160,20 +203,18 @@ def generate_heatmap(unique_nodes, model_path=None, temperature=1.0, train=False
         
     # Input dim is 3 (x, y, z)
     model = GCNHeatmapModel(input_dim=3, device=device)
-    
-    if model_path and os.path.exists(model_path):
-        try:
-            model.load_state_dict(torch.load(model_path, map_location=device))
-            model.eval()
-        except Exception as e:
-            print(f"Failed to load model: {e}")
+    loaded = _try_load_model_state(model, model_path=model_path, device=device)
+
+    if (not loaded) and (not train):
+        # Deterministic fallback avoids random untrained neural outputs.
+        return _generate_distance_based_heatmap(unique_nodes, temperature)
     
     # Perform Unsupervised Training if requested
     if train:
         print(f"Training GCN on {len(unique_nodes)} nodes...")
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
         # Increase epochs for better convergence since we run it once
-        train_unsupervised(model, optimizer, x, edge_index, dist_matrix, num_epochs=500)
+        train_unsupervised(model, optimizer, x, edge_index, dist_matrix, num_epochs=300)
         
         # Save the trained model
         if model_path:

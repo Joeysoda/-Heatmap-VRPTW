@@ -1,4 +1,24 @@
 import os
+from pathlib import Path
+from typing import Iterable, Optional
+
+
+def _first_existing_dir(candidates: Iterable[Optional[os.PathLike]]) -> Path:
+    for candidate in candidates:
+        if not candidate:
+            continue
+        p = Path(candidate).expanduser()
+        if p.exists() and p.is_dir():
+            return p
+    for candidate in candidates:
+        if candidate:
+            return Path(candidate).expanduser()
+    return Path.cwd()
+
+
+PROJECT_DIR = Path(__file__).resolve().parents[1]  # .../New_GCN_XYZ
+REPO_DIR = PROJECT_DIR.parent  # .../-Heatmap-VRPTW
+WORKSPACE_DIR = REPO_DIR.parent  # .../hospital_main_copy
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -29,11 +49,19 @@ TIME_WINDOW_PENALTY = 1000.0
 # ---------------------------------------------------------------------------
 # File Paths
 # ---------------------------------------------------------------------------
-BASE_DIR = r"d:\1nottingham\Year4a\FYP\hospital-main"
+BASE_DIR = os.getenv("HOSPITAL_BASE_DIR", str(WORKSPACE_DIR))
 NODE_FILE = os.path.join(BASE_DIR, "Hospital_Simulator", "test_instances", "d2_150.txt")
 INSTANCE_DIR = os.path.join(BASE_DIR, "Hospital_Simulator", "test_instances")
 
-ROBOT_DATA_DIR = r"d:\1nottingham\Year4a\FYP\hospital-main\robot_data"
+ROBOT_DATA_DIR_CANDIDATES = [
+    os.getenv("ROBOT_DATA_DIR"),
+    PROJECT_DIR / "robot_data",
+    REPO_DIR / "robot_data",
+    WORKSPACE_DIR / "robot_data",
+    Path(r"d:\1nottingham\Year4a\FYP\hospital-main\robot_data"),
+]
+ROBOT_DATA_DIR = str(_first_existing_dir(ROBOT_DATA_DIR_CANDIDATES))
+
 ROBOT_ORDER_FILE = os.path.join(ROBOT_DATA_DIR, "robot_order.xlsx")
 ROBOT_MISSION_FILE = os.path.join(ROBOT_DATA_DIR, "robot_mission.xlsx")
 ROBOT_EDGE_FILE = os.path.join(ROBOT_DATA_DIR, "robot_edge.xlsx")

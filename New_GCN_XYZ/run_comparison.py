@@ -79,6 +79,10 @@ def _default_gcn_params():
     }
 
 
+def _safe_filename(name: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "_" for ch in name).strip("_")
+
+
 def _build_gcn_candidates(max_candidates: int = 20):
     base = _default_gcn_params()
     keys = [
@@ -466,6 +470,165 @@ class ComparisonExperiment:
                 )
         print(f"Saved report: {txt_path}")
 
+    def _save_metric_svg(
+        self,
+        path: str,
+        title: str,
+        scales: Sequence[int],
+        series: Dict[str, List[float]],
+        higher_is_better: bool,
+    ):
+        width, height = 1200, 700
+        left, top, right, bottom = 90, 80, 60, 90
+        plot_w = width - left - right
+        plot_h = height - top - bottom
+
+        all_values = [v for vals in series.values() for v in vals if v == v and v != float("inf")]
+        if not all_values:
+            all_values = [0.0, 1.0]
+        y_min = min(all_values)
+        y_max = max(all_values)
+        if y_max - y_min < 1e-9:
+            y_max = y_min + 1.0
+
+        def x_of(i: int) -> float:
+            if len(scales) <= 1:
+                return left + plot_w / 2.0
+            return left + (i / (len(scales) - 1)) * plot_w
+
+        def y_of(v: float) -> float:
+            ratio = (v - y_min) / (y_max - y_min)
+            return top + (1.0 - ratio) * plot_h
+
+        palette = [
+            "#1f77b4",
+            "#d62728",
+            "#2ca02c",
+            "#ff7f0e",
+            "#9467bd",
+            "#8c564b",
+            "#e377c2",
+            "#17becf",
+        ]
+
+        lines: List[str] = []
+        lines.append(
+            f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' "
+            f"viewBox='0 0 {width} {height}'>"
+        )
+        lines.append("<rect x='0' y='0' width='100%' height='100%' fill='white'/>")
+        lines.append(
+            f"<text x='{width/2}' y='38' text-anchor='middle' font-size='26' font-family='Arial'>{title}</text>"
+        )
+        direction = "higher is better" if higher_is_better else "lower is better"
+        lines.append(
+            f"<text x='{width/2}' y='62' text-anchor='middle' font-size='14' fill='#666' font-family='Arial'>{direction}</text>"
+        )
+
+        # axes
+        lines.append(f"<line x1='{left}' y1='{top + plot_h}' x2='{left + plot_w}' y2='{top + plot_h}' stroke='#222'/>")
+        lines.append(f"<line x1='{left}' y1='{top}' x2='{left}' y2='{top + plot_h}' stroke='#222'/>")
+
+        # y ticks
+        for i in range(6):
+            yv = y_min + (i / 5.0) * (y_max - y_min)
+            py = y_of(yv)
+            lines.append(f"<line x1='{left-5}' y1='{py:.2f}' x2='{left}' y2='{py:.2f}' stroke='#666'/>")
+            lines.append(
+                f"<text x='{left-10}' y='{py+4:.2f}' text-anchor='end' font-size='12' fill='#444' font-family='Arial'>{yv:.4g}</text>"
+            )
+            lines.append(
+                f"<line x1='{left}' y1='{py:.2f}' x2='{left+plot_w}' y2='{py:.2f}' stroke='#eee'/>"
+            )
+
+        # x ticks
+        for i, scale in enumerate(scales):
+            px = x_of(i)
+            lines.append(f"<line x1='{px:.2f}' y1='{top+plot_h}' x2='{px:.2f}' y2='{top+plot_h+5}' stroke='#666'/>")
+            lines.append(
+                f"<text x='{px:.2f}' y='{top+plot_h+24}' text-anchor='middle' font-size='12' fill='#444' font-family='Arial'>{scale}</text>"
+            )
+
+        # series
+        legend_x = left + 10
+        legend_y = top + 10
+        for idx, (algo, vals) in enumerate(series.items()):
+            color = palette[idx % len(palette)]
+            points = []
+            for i, v in enumerate(vals):
+                if v != v or v == float("inf"):
+                    continue
+                points.append(f"{x_of(i):.2f},{y_of(v):.2f}")
+            if points:
+                lines.append(
+                    f"<polyline fill='none' stroke='{color}' stroke-width='2.2' points='{' '.join(points)}'/>"
+                )
+            for i, v in enumerate(vals):
+                if v != v or v == float("inf"):
+                    continue
+                lines.append(
+                    f"<circle cx='{x_of(i):.2f}' cy='{y_of(v):.2f}' r='3.5' fill='{color}'/>"
+                )
+
+            ly = legend_y + idx * 22
+            lines.append(f"<line x1='{legend_x}' y1='{ly}' x2='{legend_x+22}' y2='{ly}' stroke='{color}' stroke-width='3'/>")
+            lines.append(
+                f"<text x='{legend_x+30}' y='{ly+4}' font-size='12' fill='#222' font-family='Arial'>{algo}</text>"
+            )
+
+        lines.append("</svg>")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+
+    def save_charts(self):
+        if not self.results:
+            return
+
+        scales = [int(r["order_count"]) for r in self.results]
+        algo_names = list(self.algorithms.keys())
+
+        metric_specs = [
+            ("feasible_rate", "Feasible Rate", True),
+            ("total_cost", "Total Cost", False),
+            ("makespan", "Makespan", False),
+            ("total_travel", "Total Travel", False),
+        ]
+
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+
+            has_matplotlib = True
+        except Exception:
+            has_matplotlib = False
+
+        for metric, title, higher_is_better in metric_specs:
+            series: Dict[str, List[float]] = {}
+            for algo in algo_names:
+                values = []
+                for result in self.results:
+                    data = result["algorithms"].get(algo, {})
+                    values.append(_safe_float(data.get(metric, float("nan")), float("nan")))
+                series[algo] = values
+
+            if has_matplotlib:
+                fig, ax = plt.subplots(figsize=(11, 6))
+                for algo, values in series.items():
+                    ax.plot(scales, values, marker="o", linewidth=1.8, label=algo)
+                ax.set_title(f"{title} by Scale")
+                ax.set_xlabel("Order Count")
+                ax.set_ylabel(title)
+                ax.grid(True, linestyle="--", alpha=0.35)
+                ax.legend(fontsize=8, ncol=2)
+                out_path = os.path.join(self.output_dir, f"chart_{_safe_filename(metric)}.png")
+                fig.tight_layout()
+                fig.savefig(out_path, dpi=180)
+                plt.close(fig)
+                print(f"Saved chart: {out_path}")
+            else:
+                out_path = os.path.join(self.output_dir, f"chart_{_safe_filename(metric)}.svg")
+                self._save_metric_svg(out_path, f"{title} by Scale", scales, series, higher_is_better)
+                print(f"Saved chart: {out_path}")
+
 
 def main():
     print("\n" + "=" * 78)
@@ -473,12 +636,12 @@ def main():
     print("=" * 78)
 
     # 1) Load data
-    print("\n[1/5] Loading data...")
+    print("\n[1/6] Loading data...")
     nodes, edges, all_orders, charging_stations = load_all_data(order_limit=None)
     print(f"Orders loaded: {len(all_orders)}")
 
     # 2) Build heatmap
-    print("\n[2/5] Generating heatmap...")
+    print("\n[2/6] Generating heatmap...")
     unique_nodes = list(
         set(
             [(o["start_x"], o["start_y"], o["start_z"]) for o in all_orders]
@@ -502,7 +665,7 @@ def main():
     experiment.save_run_snapshot(test_scales=test_scales, model_path=model_path)
 
     # 3) Tune GCN
-    print("\n[3/5] Tuning GCN parameters (bounded search)...")
+    print("\n[3/6] Tuning GCN parameters (bounded search)...")
     experiment.tune_gcn_params(
         all_orders=all_orders,
         heatmap=heatmap,
@@ -511,7 +674,7 @@ def main():
     )
 
     # 4) Run full comparison
-    print("\n[4/5] Running full comparison...")
+    print("\n[4/6] Running full comparison...")
     for scale in test_scales:
         subset = list(all_orders[:scale])
         experiment.run_single_experiment(
@@ -525,10 +688,12 @@ def main():
     experiment.compute_overall_ranking()
 
     # 5) Save outputs
-    print("\n[5/5] Saving outputs...")
+    print("\n[5/6] Saving outputs...")
     experiment.save_summary_csv()
     experiment.save_raw_results()
     experiment.save_text_report()
+    print("\n[6/6] Generating charts...")
+    experiment.save_charts()
 
     gcn_overall = next((r for r in experiment.overall_ranking if r["algorithm"] == "GCN-Guided"), None)
     if gcn_overall is not None:

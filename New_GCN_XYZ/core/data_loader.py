@@ -15,8 +15,12 @@ It also normalizes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
+import re
 from typing import Dict, List, Optional, Sequence, Tuple
+import xml.etree.ElementTree as ET
+import zipfile
 
 try:
     from openpyxl import load_workbook
@@ -24,7 +28,7 @@ try:
     HAS_OPENPYXL = True
 except ImportError:
     HAS_OPENPYXL = False
-    print("Warning: openpyxl not found. Using fallback data loading.")
+    print("Warning: openpyxl not found. Using built-in XLSX reader.")
 
 from .config import (
     DEFAULT_CHARGING_STATIONS,
@@ -35,6 +39,146 @@ from .config import (
 
 
 NodeCoord = Tuple[float, float, int]
+
+_XLSX_NS = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_XLS_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_COL_RE = re.compile(r"^([A-Z]+)")
+
+
+def _excel_col_to_index(cell_ref: str) -> int:
+    m = _COL_RE.match(cell_ref.upper())
+    if not m:
+        return 0
+    col = m.group(1)
+    idx = 0
+    for ch in col:
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return max(0, idx - 1)
+
+
+def _decode_shared_strings(zf: zipfile.ZipFile) -> List[str]:
+    if "xl/sharedStrings.xml" not in zf.namelist():
+        return []
+    root = ET.fromstring(zf.read("xl/sharedStrings.xml"))
+    out: List[str] = []
+    for si in root.findall("x:si", _XLSX_NS):
+        parts = [t.text or "" for t in si.findall(".//x:t", _XLSX_NS)]
+        out.append("".join(parts))
+    return out
+
+
+def _resolve_sheet_target(zf: zipfile.ZipFile, preferred_names: Sequence[str]) -> Optional[str]:
+    if "xl/workbook.xml" not in zf.namelist() or "xl/_rels/workbook.xml.rels" not in zf.namelist():
+        return None
+
+    wb = ET.fromstring(zf.read("xl/workbook.xml"))
+    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+
+    rid_to_target: Dict[str, str] = {}
+    for rel in rels.findall(f"{{{_XLS_RELS_NS}}}Relationship"):
+        rel_type = rel.attrib.get("Type", "")
+        if rel_type.endswith("/worksheet"):
+            rid_to_target[rel.attrib.get("Id", "")] = rel.attrib.get("Target", "")
+
+    preferred = {_normalize_header(name) for name in preferred_names}
+    sheets = wb.find("x:sheets", _XLSX_NS)
+    if sheets is None:
+        return None
+
+    chosen_target: Optional[str] = None
+    for sheet in sheets.findall("x:sheet", _XLSX_NS):
+        rid = sheet.attrib.get(f"{{{_REL_NS}}}id", "")
+        target = rid_to_target.get(rid)
+        if not target:
+            continue
+        if _normalize_header(sheet.attrib.get("name")) in preferred:
+            chosen_target = target
+            break
+        if chosen_target is None:
+            chosen_target = target
+
+    if chosen_target is None:
+        return None
+    return f"xl/{chosen_target.lstrip('/')}"
+
+
+def _coerce_xlsx_cell_value(cell_elem: ET.Element, shared_strings: Sequence[str]):
+    cell_type = cell_elem.attrib.get("t", "")
+    value_elem = cell_elem.find("x:v", _XLSX_NS)
+    inline_elem = cell_elem.find("x:is/x:t", _XLSX_NS)
+
+    if cell_type == "inlineStr":
+        return inline_elem.text if inline_elem is not None else ""
+    if value_elem is None:
+        return None
+
+    raw = value_elem.text
+    if raw is None:
+        return None
+
+    if cell_type == "s":
+        try:
+            return shared_strings[int(raw)]
+        except Exception:
+            return raw
+    if cell_type == "b":
+        return raw == "1"
+    if cell_type in ("str", "e"):
+        return raw
+
+    try:
+        num = float(raw)
+    except ValueError:
+        return raw
+    if num.is_integer():
+        return int(num)
+    return num
+
+
+def _iter_xlsx_rows_builtin(path: str, preferred_names: Sequence[str]):
+    if not os.path.exists(path):
+        return
+
+    try:
+        with zipfile.ZipFile(path) as zf:
+            target = _resolve_sheet_target(zf, preferred_names)
+            if not target or target not in zf.namelist():
+                return
+            shared_strings = _decode_shared_strings(zf)
+            with zf.open(target) as sheet_stream:
+                for _, row_elem in ET.iterparse(sheet_stream, events=("end",)):
+                    if row_elem.tag != f"{{{_XLSX_NS['x']}}}row":
+                        continue
+                    values: Dict[int, object] = {}
+                    max_idx = -1
+                    for cell in row_elem.findall("x:c", _XLSX_NS):
+                        cell_ref = cell.attrib.get("r", "A1")
+                        col_idx = _excel_col_to_index(cell_ref)
+                        values[col_idx] = _coerce_xlsx_cell_value(cell, shared_strings)
+                        max_idx = max(max_idx, col_idx)
+
+                    row = [None] * (max_idx + 1) if max_idx >= 0 else []
+                    for col_idx, v in values.items():
+                        row[col_idx] = v
+                    yield tuple(row)
+                    row_elem.clear()
+    except Exception as exc:
+        print(f"Error reading xlsx with built-in parser: {path} ({exc})")
+
+
+def _iter_xlsx_rows(path: str, preferred_names: Sequence[str]):
+    if HAS_OPENPYXL:
+        wb = load_workbook(path, read_only=True, data_only=True)
+        ws = _pick_sheet(wb, preferred_names)
+        try:
+            for row in ws.iter_rows(values_only=True):
+                yield row
+        finally:
+            wb.close()
+        return
+
+    yield from _iter_xlsx_rows_builtin(path, preferred_names)
 
 
 @dataclass
@@ -82,11 +226,23 @@ def _safe_float(value: object, default: float = 0.0) -> float:
 def _safe_datetime(value: object) -> Optional[datetime]:
     if isinstance(value, datetime):
         return value
+    if isinstance(value, (int, float)):
+        # Excel serial date (days since 1899-12-30, with fractional day time).
+        try:
+            return datetime(1899, 12, 30) + timedelta(days=float(value))
+        except Exception:
+            return None
     if value is None:
         return None
     text = str(value).strip()
     if not text:
         return None
+    try:
+        # Sometimes values arrive as numeric strings from xlsx cells.
+        numeric = float(text)
+        return datetime(1899, 12, 30) + timedelta(days=numeric)
+    except ValueError:
+        pass
     try:
         # Supports formats like "2025-03-01 10:00:00"
         return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
@@ -166,17 +322,13 @@ def _parse_node_coords_fallback(node_code: str) -> NodeCoord:
 
 def load_robot_nodes() -> List[dict]:
     """Load nodes from robot_node.xlsx, prioritizing sheet 'robot_node'."""
-    if not HAS_OPENPYXL:
+    if not os.path.exists(ROBOT_NODE_FILE):
+        print(f"robot_node.xlsx not found: {ROBOT_NODE_FILE}")
         return _get_fallback_nodes()
-
     try:
-        wb = load_workbook(ROBOT_NODE_FILE, read_only=True, data_only=True)
-        ws = _pick_sheet(wb, ("robot_node",))
-        rows = ws.iter_rows(values_only=True)
-
+        rows = _iter_xlsx_rows(ROBOT_NODE_FILE, ("robot_node", "sheet1"))
         header = next(rows, None)
         if header is None:
-            wb.close()
             return _get_fallback_nodes()
         idx = _build_header_index(header)
 
@@ -226,7 +378,6 @@ def load_robot_nodes() -> List[dict]:
                 }
             )
 
-        wb.close()
         if not nodes:
             return _get_fallback_nodes()
         print(f"Loaded {len(nodes)} nodes from robot_node.xlsx")
@@ -238,15 +389,13 @@ def load_robot_nodes() -> List[dict]:
 
 def load_robot_edges() -> List[dict]:
     """Load edges from robot_edge.xlsx."""
-    if not HAS_OPENPYXL:
+    if not os.path.exists(ROBOT_EDGE_FILE):
+        print(f"robot_edge.xlsx not found: {ROBOT_EDGE_FILE}")
         return []
     try:
-        wb = load_workbook(ROBOT_EDGE_FILE, read_only=True, data_only=True)
-        ws = _pick_sheet(wb, ("robot_edge",))
-        rows = ws.iter_rows(values_only=True)
+        rows = _iter_xlsx_rows(ROBOT_EDGE_FILE, ("robot_edge", "sheet1"))
         header = next(rows, None)
         if header is None:
-            wb.close()
             return []
         idx = _build_header_index(header)
 
@@ -274,7 +423,6 @@ def load_robot_edges() -> List[dict]:
             }
             edges.append(edge)
 
-        wb.close()
         print(f"Loaded {len(edges)} edges from robot_edge.xlsx")
         return edges
     except Exception as exc:
@@ -352,19 +500,17 @@ def _apply_time_windows(order: dict, reference_time: datetime) -> None:
 
 def load_robot_orders(limit: Optional[int] = None, node_lookup: Optional[Dict[str, _NodeRecord]] = None) -> List[dict]:
     """Load orders and map coordinates using true node lookup."""
-    if not HAS_OPENPYXL:
+    if not os.path.exists(ROBOT_ORDER_FILE):
+        print(f"robot_order.xlsx not found: {ROBOT_ORDER_FILE}")
         return _get_fallback_orders()
 
     if node_lookup is None:
         node_lookup = _get_node_lookup(load_robot_nodes())
 
     try:
-        wb = load_workbook(ROBOT_ORDER_FILE, read_only=True, data_only=True)
-        ws = _pick_sheet(wb, ("robot_order", "sheet1"))
-        rows = ws.iter_rows(values_only=True)
+        rows = _iter_xlsx_rows(ROBOT_ORDER_FILE, ("robot_order", "sheet1"))
         header = next(rows, None)
         if header is None:
-            wb.close()
             return _get_fallback_orders()
         idx = _build_header_index(header)
 
@@ -427,8 +573,6 @@ def load_robot_orders(limit: Optional[int] = None, node_lookup: Optional[Dict[st
                 "source_row_index": row_idx,
             }
             orders.append(order)
-
-        wb.close()
 
         if not orders:
             return _get_fallback_orders()
