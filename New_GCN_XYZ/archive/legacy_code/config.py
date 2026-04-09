@@ -8,12 +8,36 @@ AGV_NUM = 9
 FLOOR_PENALTY = 60.0  # Seconds per floor difference
 
 # -----------------------------------------------------------------------------
+# Battery and Charging Configuration
+# -----------------------------------------------------------------------------
+BATTERY_CAPACITY = 10000.0  # Battery capacity in units
+BATTERY_CONSUMPTION_RATE = 1.0  # Units per meter
+BATTERY_LOW_THRESHOLD = 2000.0  # Threshold to trigger charging
+CHARGING_TIME = 300.0  # Seconds to fully charge
+SERVICE_TIME_PICKUP = 30.0  # Seconds for pickup service
+SERVICE_TIME_DELIVERY = 30.0  # Seconds for delivery service
+
+# -----------------------------------------------------------------------------
+# Time Window Configuration
+# -----------------------------------------------------------------------------
+TIME_WINDOW_PENALTY = 1000.0  # Penalty for violating time windows
+ENABLE_TIME_WINDOWS = True  # Enable/disable time window constraints
+ENABLE_CHARGING = True  # Enable/disable charging constraints
+
+# -----------------------------------------------------------------------------
 # File Paths
 # -----------------------------------------------------------------------------
 # Using absolute paths based on user input
-BASE_DIR = r"d:\1nottingham\Year4a\FYP\hospital-main - 副本"
-NODE_FILE = os.path.join(BASE_DIR, "instances", "node.csv")
-INSTANCE_DIR = os.path.join(BASE_DIR, "instances", "instances")
+BASE_DIR = r"d:\1nottingham\Year4a\FYP\hospital-main"
+NODE_FILE = os.path.join(BASE_DIR, "Hospital_Simulator", "test_instances", "d2_150.txt")
+INSTANCE_DIR = os.path.join(BASE_DIR, "Hospital_Simulator", "test_instances")
+
+# Real robot data paths
+ROBOT_DATA_DIR = r"d:\1nottingham\Year4a\FYP\hospital-main\robot_data"
+ROBOT_ORDER_FILE = os.path.join(ROBOT_DATA_DIR, "robot_order.xlsx")
+ROBOT_MISSION_FILE = os.path.join(ROBOT_DATA_DIR, "robot_mission.xlsx")
+ROBOT_EDGE_FILE = os.path.join(ROBOT_DATA_DIR, "robot_edge.xlsx")
+ROBOT_NODE_FILE = os.path.join(ROBOT_DATA_DIR, "robot_node.xlsx")
 
 # -----------------------------------------------------------------------------
 # GCN Model Configuration

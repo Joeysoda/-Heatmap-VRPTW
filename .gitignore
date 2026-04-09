@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual env / local IDE
+.venv/
+.idea/
+.vscode/
+
+# Experiment outputs (regenerated locally)
+New_GCN_XYZ/results/
+New_GCN_XYZ/models/
+New_GCN_XYZ/baseline_snapshot/
+
+# Dissertation artifacts (not source code)
+New_GCN_XYZ/final/
+
+# AnyLogic runtime status/temp files
+New_GCN_XYZ/anylogic_bridge/status/*.json
+New_GCN_XYZ/anylogic_bridge/status/*.tmp

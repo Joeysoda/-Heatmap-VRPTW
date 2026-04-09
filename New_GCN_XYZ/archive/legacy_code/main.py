@@ -65,21 +65,21 @@ def process_comparison(instance_path, node_map, results_data, global_heatmap, gl
     results_data.append({
         'Instance': instance_id,
         'Orders': len(orders),
-        'GCN_Cost': m_gcn['total_cost'], 'GCN_Mksp': m_gcn['makespan'],
-        'BestFit_Cost': m_bf['total_cost'], 'BestFit_Mksp': m_bf['makespan'],
-        'FirstFit_Cost': m_ff['total_cost'], 'FirstFit_Mksp': m_ff['makespan'],
-        'Nearest_Cost': m_nn['total_cost'], 'Nearest_Mksp': m_nn['makespan'],
+        'GCN_Cost': m_gcn['total_cost'], 'GCN_Mksp': m_gcn['makespan'], 'GCN_TotalTravel': m_gcn['total_travel'],
+        'BestFit_Cost': m_bf['total_cost'], 'BestFit_Mksp': m_bf['makespan'], 'BestFit_TotalTravel': m_bf['total_travel'],
+        'FirstFit_Cost': m_ff['total_cost'], 'FirstFit_Mksp': m_ff['makespan'], 'FirstFit_TotalTravel': m_ff['total_travel'],
+        'Nearest_Cost': m_nn['total_cost'], 'Nearest_Mksp': m_nn['makespan'], 'Nearest_TotalTravel': m_nn['total_travel'],
         'Improvement_Pct': imp_pct
     })
     
     # --- Print Summary ---
     print("\nResults:")
-    print(f"{'Method':<15} | {'Time (s)':<10} | {'Makespan':<10} | {'Total Cost':<10}")
-    print("-" * 55)
-    print(f"{'GCN':<15} | {t_gcn:<10.4f} | {m_gcn['makespan']:<10.2f} | {m_gcn['total_cost']:<10.2f}")
-    print(f"{'Best Fit':<15} | {t_bf:<10.4f} | {m_bf['makespan']:<10.2f} | {m_bf['total_cost']:<10.2f}")
-    print(f"{'First Fit':<15} | {t_ff:<10.4f} | {m_ff['makespan']:<10.2f} | {m_ff['total_cost']:<10.2f}")
-    print(f"{'Nearest N.':<15} | {t_nn:<10.4f} | {m_nn['makespan']:<10.2f} | {m_nn['total_cost']:<10.2f}")
+    print(f"{'Method':<15} | {'Time (s)':<10} | {'Makespan':<10} | {'Total Travel':<12} | {'Objective':<10}")
+    print("-" * 70)
+    print(f"{'GCN':<15} | {t_gcn:<10.4f} | {m_gcn['makespan']:<10.2f} | {m_gcn['total_travel']:<12.2f} | {m_gcn['total_cost']:<10.2f}")
+    print(f"{'Best Fit':<15} | {t_bf:<10.4f} | {m_bf['makespan']:<10.2f} | {m_bf['total_travel']:<12.2f} | {m_bf['total_cost']:<10.2f}")
+    print(f"{'First Fit':<15} | {t_ff:<10.4f} | {m_ff['makespan']:<10.2f} | {m_ff['total_travel']:<12.2f} | {m_ff['total_cost']:<10.2f}")
+    print(f"{'Nearest N.':<15} | {t_nn:<10.4f} | {m_nn['makespan']:<10.2f} | {m_nn['total_travel']:<12.2f} | {m_nn['total_cost']:<10.2f}")
     print(f"\nImprovement vs Best Baseline: {imp_pct:.2f}%")
 
 def plot_results(results_data):
@@ -95,14 +95,14 @@ def plot_results(results_data):
     # Create 3 subplots
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 18), sharex=True)
     
-    # 1. Total Cost Comparison
-    rects1 = ax1.bar(x - 1.5*width, df['GCN_Cost'], width, label='GCN')
-    rects2 = ax1.bar(x - 0.5*width, df['BestFit_Cost'], width, label='Best Fit')
-    rects3 = ax1.bar(x + 0.5*width, df['FirstFit_Cost'], width, label='First Fit')
-    rects4 = ax1.bar(x + 1.5*width, df['Nearest_Cost'], width, label='Nearest Neighbor')
+    # 1. Total Travel Time Comparison (Sum of all vehicles)
+    rects1 = ax1.bar(x - 1.5*width, df['GCN_TotalTravel'], width, label='GCN')
+    rects2 = ax1.bar(x - 0.5*width, df['BestFit_TotalTravel'], width, label='Best Fit')
+    rects3 = ax1.bar(x + 0.5*width, df['FirstFit_TotalTravel'], width, label='First Fit')
+    rects4 = ax1.bar(x + 1.5*width, df['Nearest_TotalTravel'], width, label='Nearest Neighbor')
     
-    ax1.set_ylabel('Total Cost')
-    ax1.set_title('Total Cost Comparison')
+    ax1.set_ylabel('Total Travel Time (s)')
+    ax1.set_title('Total Travel Time Comparison (Sum of all vehicles)')
     ax1.legend()
     ax1.grid(True, linestyle='--', alpha=0.6)
     
@@ -124,7 +124,7 @@ def plot_results(results_data):
     ax3.axhline(0, color='black', linewidth=0.8)
     
     ax3.set_ylabel('Improvement (%)')
-    ax3.set_title('GCN Cost Improvement vs Best Baseline')
+    ax3.set_title('GCN Makespan Cost Improvement vs Best Baseline')
     ax3.set_xticks(x)
     ax3.set_xticklabels(instances, rotation=45)
     ax3.grid(True, linestyle='--', alpha=0.6)
